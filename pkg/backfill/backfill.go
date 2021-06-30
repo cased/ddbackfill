@@ -11,9 +11,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DataDog/datadog-api-client-go/api/v1/datadog"
 	"github.com/cheggaaa/pb/v3"
+	"go.uber.org/zap"
 )
 
 const StateFile = ".ddbackfill"
@@ -25,29 +27,26 @@ type Backfill struct {
 	// LastFile is the last file that was processed.
 	LastFile string
 
-	// Uploading ...
-	Uploading bool
-
 	// WorkerCount ...
 	WorkerCount int
 
 	// AuditEventPaths contains list of ordered audit events
 	AuditEventPaths []string
 
-	ddSource string
-	ddClient *datadog.APIClient
-	ddTags   string
-
-	pb *pb.ProgressBar
+	ddSource  string
+	ddClient  *datadog.APIClient
+	ddTags    string
+	errorChan chan error
+	pb        *pb.ProgressBar
 }
 
 func New(path string) *Backfill {
 	b := &Backfill{
 		Path:            path,
-		Uploading:       true,
 		AuditEventPaths: []string{},
 		WorkerCount:     runtime.NumCPU(),
 		ddSource:        "auditevents",
+		errorChan:       make(chan error),
 	}
 	b.init()
 
@@ -63,85 +62,85 @@ func (b *Backfill) Close() error {
 }
 
 func (b *Backfill) Backfill() error {
-	done := make(chan struct{})
-	defer close(done)
-
-	paths, errc := b.loadAuditEventPaths(done)
-
-	fmt.Println("outside of b.loadAuditEventPaths")
-	c := make(chan bool)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
 
 	b.pb = pb.StartNew(len(b.AuditEventPaths))
-
-	var wg sync.WaitGroup
+	pathsChan := make(chan string)
 
 	for i := 0; i < b.WorkerCount; i++ {
 		wg.Add(1)
 
-		go func() {
-			b.worker(done, paths, c)
-			fmt.Println("done with worker")
-			wg.Done()
-		}()
+		go b.worker(ctx, pathsChan, i, &wg)
 	}
-	go func() {
-		// Wait for all workers to consume channels
-		wg.Wait()
-		close(c)
-	}()
 
-	fmt.Printf("Started %d workers\n", b.WorkerCount)
+	zap.L().Info("started workers", zap.Int("count", b.WorkerCount))
 
-	return <-errc
+	for _, path := range b.AuditEventPaths {
+		pathsChan <- path
+	}
+	cancel()
+
+	wg.Wait()
+
+	return nil
 }
 
-func (b *Backfill) worker(done chan struct{}, paths <-chan string, c chan<- bool) {
+func (b *Backfill) worker(ctx context.Context, pathsChan <-chan string, worker int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	batch := NewBatch(func(body []datadog.HTTPLogItem) {
-		fmt.Printf("Batch prepared (%d)\n", len(body))
-
 		ctx := datadog.NewDefaultContext(context.Background())
-		b.ddClient.LogsApi.SubmitLog(ctx, body)
-
+		_, resp, err := b.ddClient.LogsApi.SubmitLog(ctx, body)
 		b.pb.Add(len(body))
-	})
+		if err != nil {
+			zap.L().Error("could not submit logs", zap.Error(err))
+		}
 
-	for path := range paths {
-		if !b.Uploading {
-			if b.LastFile != "" && path >= b.LastFile {
-				// We hit the last file uploaded, we can continue
-				b.Uploading = true
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			zap.L().Debug("successfully submitted logs", zap.Int("count", len(body)))
+		} else {
+			zap.L().Error("could not submit logs", zap.Int("count", len(body)))
+		}
+	})
+	defer batch.Submit()
+
+	for {
+		select {
+		case <-ctx.Done():
+			zap.L().Debug("Shutting down worker", zap.Int("worker", worker))
+			return
+		case path, ok := <-pathsChan:
+			// Channel has been closed.
+			if !ok {
+				zap.L().Debug("Shutting down worker", zap.Int("worker", worker))
+				return
 			}
 
-			b.pb.Increment()
+			if b.LastFile != "" && path <= b.LastFile {
+				// We hit the last file uploaded, we can continue
+				b.pb.Increment()
+				continue
+			}
 
-			fmt.Println("b.Uploading")
-			continue
-		}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				zap.L().Warn("could not read file", zap.Error(err))
+				continue
+			}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
+			// Prepare log item
+			li := datadog.NewHTTPLogItem()
+			li.SetMessage(string(data))
+			li.SetDdsource(b.ddSource)
+			li.SetDdtags(b.ddTags)
 
-		li := datadog.NewHTTPLogItem()
-		li.SetMessage(string(data))
-		li.SetDdsource(b.ddSource)
-		// TODO: Set this based on test/live in bucket name
-		li.SetDdtags(b.ddTags)
+			// Add to batch
+			batch.Append(li)
 
-		batch.Append(li)
-
-		b.LastFile = path
-
-		select {
-		case c <- true:
-		case <-done:
-			batch.Submit()
-			return
+			b.LastFile = path
 		}
 	}
-
-	batch.Submit()
 }
 
 func (b *Backfill) init() {
@@ -156,9 +155,6 @@ func (b *Backfill) init() {
 			panic(err)
 		}
 		b.LastFile = string(data)
-
-		// We have a state file and file to start after, don't upload right away
-		b.Uploading = false
 	}
 
 	// Prepare Datadog tags to be included with each audit event
@@ -172,47 +168,31 @@ func (b *Backfill) init() {
 	configuration := datadog.NewConfiguration()
 	b.ddClient = datadog.NewAPIClient(configuration)
 
+	zap.L().Debug("initialized backfill", zap.String("tags", b.ddTags), zap.String("last_file", b.LastFile))
+
+	b.loadAuditEventPaths()
 }
 
-func (b *Backfill) loadAuditEventPaths(done <-chan struct{}) (<-chan string, <-chan error) {
-	fmt.Println("Loading audit events…")
-	paths := make(chan string)
-	errc := make(chan error, 1)
+func (b *Backfill) loadAuditEventPaths() {
+	walkStart := time.Now()
+	filepath.Walk(b.Path, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
 
-	go func() {
-		defer close(paths)
-
-		errc <- filepath.Walk(b.Path, func(path string, info fs.FileInfo, err error) error {
-			if err != nil {
-				fmt.Println(err)
-				return err
-			}
-
-			// Only want to publish files
-			if info.IsDir() {
-				return nil
-			}
-
-			b.AuditEventPaths = append(b.AuditEventPaths, path)
-
-			select {
-			case paths <- path:
-				fmt.Println(path)
-				fmt.Println("194 ended")
-			case <-done:
-				fmt.Println("197 ended")
-				return errors.New("walk canceled")
-			}
+		// Only want to publish files
+		if info.IsDir() {
 			return nil
-		})
+		}
 
-		fmt.Println("ended")
-	}()
+		b.AuditEventPaths = append(b.AuditEventPaths, path)
 
-	fmt.Println("Sorting audit events…")
-	fmt.Println(len(b.AuditEventPaths))
-	fmt.Println(len(paths))
+		return nil
+	})
+	zap.L().Debug("loaded audit events", zap.Duration("took", time.Since(walkStart)))
+
+	sortStart := time.Now()
 	sort.Strings(b.AuditEventPaths)
-
-	return paths, errc
+	zap.L().Debug("sorted audit events", zap.Duration("took", time.Since(sortStart)))
 }

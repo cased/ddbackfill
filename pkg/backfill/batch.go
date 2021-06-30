@@ -1,8 +1,6 @@
 package backfill
 
 import (
-	"fmt"
-
 	"github.com/DataDog/datadog-api-client-go/api/v1/datadog"
 )
 
@@ -49,7 +47,7 @@ func (b *Batch) Clear() {
 
 func (b *Batch) Append(item *datadog.HTTPLogItem) {
 	if b.BodySize >= BatchMaxLength {
-		fmt.Printf("Max body size encounted %d of %d limit\n", b.BodySize, BatchMaxItemLength)
+		// fmt.Printf("Max body size encounted %d of %d limit\n", b.BodySize, BatchMaxItemLength)
 		b.Submit()
 	}
 
@@ -58,14 +56,14 @@ func (b *Batch) Append(item *datadog.HTTPLogItem) {
 	// This entry will exceed max item length, we need to submit what we have then
 	// submit the one item on its own
 	if c > BatchMaxItemLength {
-		fmt.Printf("Hit BatchMaxItemLength with %d\n", c)
+		// fmt.Printf("Hit BatchMaxItemLength with %d\n", c)
 		b.Submit()
 		b.Items = append(b.Items, *item)
 		b.BodySize += c
 		b.Submit()
 		return
 	} else if b.BodySize+c > BatchMaxLength {
-		fmt.Printf("Hit BatchMaxLength with %d\n", b.BodySize+c)
+		// fmt.Printf("Hit BatchMaxLength with %d\n", b.BodySize+c)
 		// By appending we'd exceed the batch limit, need to submit first
 		b.Submit()
 	}
@@ -74,7 +72,7 @@ func (b *Batch) Append(item *datadog.HTTPLogItem) {
 	b.BodySize += c
 
 	if len(b.Items) == BatchItemLimit {
-		fmt.Println("Hit BatchItemLimit")
+		// fmt.Println("Hit BatchItemLimit")
 		b.Submit()
 	}
 }
