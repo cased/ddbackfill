@@ -2,14 +2,33 @@
 ## explicit
 github.com/DataDog/datadog-api-client-go
 github.com/DataDog/datadog-api-client-go/api/v1/datadog
+# github.com/VividCortex/ewma v1.1.1
+github.com/VividCortex/ewma
+# github.com/cheggaaa/pb/v3 v3.0.8
+## explicit
+github.com/cheggaaa/pb/v3
+github.com/cheggaaa/pb/v3/termutil
+# github.com/fatih/color v1.10.0
+github.com/fatih/color
 # github.com/golang/protobuf v1.2.0
 github.com/golang/protobuf/proto
+# github.com/mattn/go-colorable v0.1.8
+github.com/mattn/go-colorable
+# github.com/mattn/go-isatty v0.0.12
+github.com/mattn/go-isatty
+# github.com/mattn/go-runewidth v0.0.12
+github.com/mattn/go-runewidth
+# github.com/rivo/uniseg v0.2.0
+github.com/rivo/uniseg
 # golang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
 # golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
+# golang.org/x/sys v0.0.0-20210403161142-5e06dd20ab57
+golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/unix
 # google.golang.org/appengine v1.4.0
 google.golang.org/appengine/internal
 google.golang.org/appengine/internal/base
