@@ -6,6 +6,7 @@ Publish your Cased audit events to DataDog logs.
 
 1. Reach out to your Cased account representative to obtain an export of your Cased Audit events.
 1. Download the [latest release](https://github.com/cased/ddbackfill/releases) of `ddbackfill` for your operating system.
+1. [Setup DataDog Logs](https://www.notion.so/cased/How-to-build-an-Audit-trail-with-Datadog-592d50b4fea14857a82bdf683c91b27e)
 1. Run `ddbackfill`
 
 ```sh
