@@ -38,5 +38,5 @@ func main() {
 	if err := b.Backfill(); err != nil {
 		panic(err)
 	}
-	fmt.Println(time.Since(start))
+	zap.L().Debug("backfill finished", zap.Duration("took", time.Since(start)))
 }
