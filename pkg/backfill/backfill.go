@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-api-client-go/api/v1/datadog"
+	"github.com/cased/consumers/pkg/auditevents"
 	"github.com/cheggaaa/pb/v3"
 	"go.uber.org/zap"
 )
@@ -74,7 +76,7 @@ func (b *Backfill) Backfill() error {
 		go b.worker(ctx, pathsChan, i, &wg)
 	}
 
-	zap.L().Info("started workers", zap.Int("count", b.WorkerCount))
+	zap.L().Debug("started workers", zap.Int("count", b.WorkerCount))
 
 	for _, path := range b.AuditEventPaths {
 		pathsChan <- path
@@ -131,9 +133,26 @@ func (b *Backfill) worker(ctx context.Context, pathsChan <-chan string, worker i
 
 			// Prepare log item
 			li := datadog.NewHTTPLogItem()
-			li.SetMessage(string(data))
 			li.SetDdsource(b.ddSource)
 			li.SetDdtags(b.ddTags)
+
+			aep, err := auditevents.NewAuditEventPayload(data)
+			if err != nil {
+				panic(err)
+			}
+
+			// Log events can be submitted up to 18h in the past and 2h in the future.
+			diff := 18 * time.Hour
+			then := time.Now().Add(-diff)
+			if aep.DotCased.PublishedAt.Before(then) {
+				aep.DotCased.PublishedAt = time.Now()
+			}
+
+			d, err := json.Marshal(aep)
+			if err != nil {
+				panic(err)
+			}
+			li.SetMessage(string(d))
 
 			// Add to batch
 			batch.Append(li)

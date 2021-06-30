@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cased/ddbackfill/pkg/backfill"
 	"go.uber.org/zap"
@@ -33,7 +34,9 @@ func main() {
 	b := backfill.New(os.Args[1])
 	defer b.Close()
 
+	start := time.Now()
 	if err := b.Backfill(); err != nil {
 		panic(err)
 	}
+	fmt.Println(time.Since(start))
 }
