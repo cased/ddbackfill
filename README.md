@@ -16,6 +16,10 @@ ddbackfill ~/path-to-audit-events
 
 If `ddbackfill` stops for any reason, it will resume where it left off.
 
+## Notice
+
+To overcome DataDog's [limitation](https://docs.datadoghq.com/logs/log_collection/?tab=host#custom-log-forwarding) to dropping events that happened more than 18 hours ago `ddbackfill` will update the `.cased.published_at` timestamp to the current time.
+
 ## Debug
 
 If any issues arise while running `ddbackfill`, you can enable debug mode by running:
